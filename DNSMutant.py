@@ -8,6 +8,9 @@ colorama.init(autoreset=True)
 
 import pygeoip
 import json
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__file__)
 
 import re
 import os
@@ -80,14 +83,14 @@ class GeoIP():
 class DynamicDNSServerFactory(server.DNSServerFactory):
 
     def handleQuery(self, message, protocol, address):
-        if protocol.transport.socketType == socket.SOCK_STREAM:
+        if protocol.transport.socket.type == socket.SOCK_STREAM:
             self.peer_address = protocol.transport.getPeer()
         elif protocol.transport.socketType == socket.SOCK_DGRAM:
             self.peer_address = IPv4Address('UDP', *address)
         else:
             print_red("Unexpected socket type %r" % protocol.transport.socket.type)
 
-        print_blue("Got message from : %r" % self.peer_address)
+        logger.debug("Got message from : %r" % self.peer_address)
 
         # Make peer_address available to resolvers that support that attribute
         for resolver in self.resolver.resolvers:
@@ -101,14 +104,17 @@ class DynamicResolver(object):
     A resolver which calculates the answers to certain queries based on the
     query type and name.
     """
-    _pattern = b'origin'
+    _pattern = (b'origin', b'www', b'ns1', b'ns2')
+    _ns_pattern = (b'ns1', b'ns2')
+
     # _network = b'172.0.2'
 
 
-    def __init__(self, ip_json):
+    def __init__(self, ip_json, ns_ip):
         self._peer_address = None
         self._geoip = GeoIP()
         self._IPs = json.loads(open(ip_json).read())
+        self._ns_ip = ns_ip
 
     @property
     def peer_address(self):
@@ -134,20 +140,24 @@ class DynamicResolver(object):
         """
         Calculate the response to a query.
         """
-        reply_ip = '127.0.0.1'
+        reply_ip = self._ns_ip
         query_ip = self._geoip.ip_2_city(self.peer_address.host)
         print(json.dumps(query_ip, indent=4, sort_keys=True))
 
-        print_blue("Replying >>>>>> ....")
+        print_blue("Receiving >>>>>> ....")
         print_green(str(query_ip))
-        print_blue("with <<<<<< ....")
+        print_blue("Replying with <<<<<< ....")
 
-        for ip in self._IPs:
-            if query_ip['country_code'] != ip['country_code']:
-                print_red(str(ip))
-                reply_ip = ip['ip']
-                break
-     
+        labels = query.name.name.split(b'.')
+        if labels[0].startswith(self._ns_pattern):
+            print_red('NS: ' + str(reply_ip))
+        else:
+            for ip in self._IPs:
+                if query_ip['country_name'] != ip['country_name']:
+                    reply_ip = ip['ip']
+                    print_red(str(ip))
+                    break
+
         name = query.name.name
 #        labels = name.split(b'.')
 #        parts = labels[0].split(self._pattern)
@@ -168,7 +178,8 @@ class DynamicResolver(object):
         Check if the query should be answered dynamically, otherwise dispatch to
         the fallback resolver.
         """
-        print_red("DynamicResolver.query(): {} ask {}".format(self.peer_address, query.name.name))
+        logger.info("\n\n----------------------------")
+        logger.info("DynamicResolver.query(): {} ask {}, type {}".format(self.peer_address, query.name.name, query.type))
  
         if self._dynamicResponseRequired(query):
             return defer.succeed(self._doDynamicResponse(query))
@@ -178,7 +189,7 @@ class DynamicResolver(object):
         
 class ClientAddressDNSDatagramProtocol(dns.DNSDatagramProtocol):
     def datagramReceived(self, datagram, addr):
-        print("Datagram {} from {}".format(datagram, addr))
+        logger.debug("Datagram {} from {}".format(datagram, addr))
         return dns.DNSDatagramProtocol.datagramReceived(self, datagram, addr)
 
 
@@ -191,13 +202,13 @@ def main(args):
     """
 
     factory = DynamicDNSServerFactory(
-        clients=[DynamicResolver(args.ip_json), client.Resolver(resolv='/etc/resolv.conf')], verbose=1
+        clients=[DynamicResolver(args.ip_json, args.ns_ip)], verbose=1
     )
 
     protocol = ClientAddressDNSDatagramProtocol(controller=factory)
 
-    reactor.listenUDP(1053, protocol)
-    reactor.listenTCP(1053, factory)
+    reactor.listenUDP(53, protocol)
+    reactor.listenTCP(53, factory)
 
     reactor.run()
 
@@ -206,6 +217,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='A DNS Server for replying IPs dynamically')
     parser.add_argument('-j', '--json', help='IP info in JSON format.', required='True', dest='ip_json')
+    parser.add_argument('-n', '--ns', help='Name Server\'s IP', required='True', dest='ns_ip')
     args = parser.parse_args()
     print(args)
     raise SystemExit(main(args))
