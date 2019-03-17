@@ -130,7 +130,7 @@ class DynamicResolver(object):
         """
         if query.type == dns.A:
             labels = query.name.name.split(b'.')
-            if labels[0].startswith(self._pattern):
+            if labels[0].lower().startswith(self._pattern):
                 return True
 
         return False
@@ -149,7 +149,7 @@ class DynamicResolver(object):
         print_blue("Replying with <<<<<< ....")
 
         labels = query.name.name.split(b'.')
-        if labels[0].startswith(self._ns_pattern):
+        if labels[0].lower().startswith(self._ns_pattern):
             print_red('NS: ' + str(reply_ip))
         else:
             for ip in self._IPs:
