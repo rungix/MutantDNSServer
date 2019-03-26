@@ -155,9 +155,10 @@ class DynamicResolver(object):
             for ip in self._IPs:
                 if query_ip['country_name'] != ip['country_name']:
                     reply_ip = ip['ip']
-                    print_red(str(ip))
+                    self._IPs.remove(ip)                    
                     break
 
+        print_red(reply_ip)
         name = query.name.name
 #        labels = name.split(b'.')
 #        parts = labels[0].split(self._pattern)
